@@ -1,0 +1,134 @@
+import { createContext, useContext, useState, useEffect } from 'react';
+
+const AuthContext = createContext();
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Check if user is already logged in
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+    
+    if (savedToken && savedUser) {
+      setToken(savedToken);
+      setUser(JSON.parse(savedUser));
+    }
+    
+    setIsLoading(false);
+  }, []);
+
+  const login = async (email, password) => {
+    setError(null);
+    setIsLoading(true);
+    
+    try {
+      const username = email.split('@')[0];
+      
+      // Use FormData for OAuth2PasswordRequestForm
+      const formData = new FormData();
+      formData.append('username', username);
+      formData.append('password', password);
+      
+      const response = await fetch('http://localhost:8000/auth/login', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Login failed');
+      }
+
+      const data = await response.json();
+      
+      const mockUser = {
+        id: Date.now(),
+        email,
+        username: username,
+        avatar: `https://i.pravatar.cc/150?u=${email}`,
+        public_key: 'pk_backend_' + Math.random(),
+        created_at: new Date().toISOString(),
+      };
+      
+      setUser(mockUser);
+      setToken(data.access_token);
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('user', JSON.stringify(mockUser));
+      
+      return mockUser;
+    } catch (err) {
+      const errorMessage = err.message || 'Login failed';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const register = async (name, email, password) => {
+    setError(null);
+    setIsLoading(true);
+    
+    try {
+      const username = email.split('@')[0];
+      
+      // Signup uses query parameters
+      const response = await fetch(
+        `http://localhost:8000/auth/signup?username=${username}&password=${password}`,
+        {
+          method: 'POST',
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Registration failed');
+      }
+
+      // After successful registration, automatically login
+      return await login(email, password);
+    } catch (err) {
+      const errorMessage = err.message || 'Registration failed';
+      setError(errorMessage);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = () => {
+    setUser(null);
+    setToken(null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isLoading,
+        error,
+        login,
+        register,
+        logout,
+        isAuthenticated: !!token,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
+  return context;
+};
