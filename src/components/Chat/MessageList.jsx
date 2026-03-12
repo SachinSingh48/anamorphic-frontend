@@ -11,108 +11,119 @@ export default function MessageList({ messages, currentUserId, currentUsername }
     scrollToBottom();
   }, [messages]);
 
-  const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatDate = (timestamp) => {
-    return new Date(timestamp).toLocaleDateString();
-  };
-
   // Group messages by date
-  const messagesByDate = messages.reduce((acc, msg) => {
-    const date = formatDate(msg.timestamp);
-    if (!acc[date]) acc[date] = [];
-    acc[date].push(msg);
-    return acc;
+  const groupedMessages = messages.reduce((groups, message) => {
+    const date = new Date(message.timestamp).toLocaleDateString();
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(message);
+    return groups;
   }, {});
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+    <div className="flex-1 overflow-y-auto bg-gray-50 p-4 space-y-4">
       {messages.length === 0 ? (
         <div className="flex items-center justify-center h-full text-gray-400">
-          <p className="text-lg">💬 No messages yet. Start the conversation!</p>
+          <p>💬 No messages yet. Start the conversation!</p>
         </div>
       ) : (
-        Object.entries(messagesByDate).map(([date, dayMessages]) => (
-          <div key={date}>
-            {/* Date Separator */}
-            <div className="flex items-center gap-4 my-4">
-              <div className="flex-1 border-t border-gray-300"></div>
-              <span className="text-xs text-gray-500 bg-gray-50 px-2">
-                {date}
-              </span>
-              <div className="flex-1 border-t border-gray-300"></div>
-            </div>
+        <>
+          {Object.entries(groupedMessages).map(([date, dateMessages]) => (
+            <div key={date}>
+              {/* Date Separator */}
+              <div className="flex items-center gap-2 my-4">
+                <div className="flex-1 h-px bg-gray-300"></div>
+                <span className="text-xs text-gray-500 px-2">{date}</span>
+                <div className="flex-1 h-px bg-gray-300"></div>
+              </div>
 
-            {/* Messages for this date */}
-            {dayMessages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex gap-3 ${
-                  msg.sender_id === currentUserId ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                {/* Avatar (for other user) */}
-                {msg.sender_id !== currentUserId && (
-                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                    {msg.sender_name.charAt(0).toUpperCase()}
-                  </div>
-                )}
+              {/* Messages for this date */}
+              {dateMessages.map((message, index) => {
+                const isCurrentUser = message.sender_id === currentUserId;
+                const time = new Date(message.timestamp).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                });
 
-                {/* Message Bubble */}
-                <div
-                  className={`max-w-xs lg:max-w-md ${
-                    msg.sender_id === currentUserId ? 'order-2' : 'order-1'
-                  }`}
-                >
-                  {/* Public Message */}
+                return (
                   <div
-                    className={`p-3 rounded-lg ${
-                      msg.sender_id === currentUserId
-                        ? 'bg-blue-500 text-white rounded-br-none'
-                        : 'bg-gray-200 text-gray-900 rounded-bl-none'
+                    key={`msg-${message.sender_id}-${message.timestamp}-${index}`}
+                    className={`flex gap-2 mb-3 ${
+                      isCurrentUser ? 'flex-row-reverse' : ''
                     }`}
                   >
-                    <p className="text-sm">{msg.public_message}</p>
-                    <p
-                      className={`text-xs mt-1 ${
-                        msg.sender_id === currentUserId
-                          ? 'text-blue-100'
-                          : 'text-gray-600'
+                    {/* Avatar */}
+                    <div className="flex-shrink-0">
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+                          isCurrentUser ? 'bg-green-500' : 'bg-blue-500'
+                        }`}
+                      >
+                        {(isCurrentUser ? currentUsername : message.sender_name)?.[0]?.toUpperCase()}
+                      </div>
+                    </div>
+
+                    {/* Message Bubble */}
+                    <div
+                      className={`max-w-xs lg:max-w-md ${
+                        isCurrentUser ? 'items-end' : 'items-start'
                       }`}
                     >
-                      {formatTime(msg.timestamp)}
-                    </p>
-                  </div>
-
-                  {/* Secret Message (if exists) */}
-                  {msg.secret_message && msg.sender_id === currentUserId && (
-                    <div className="mt-2 p-3 rounded-lg bg-yellow-50 border border-yellow-200 rounded-br-none">
-                      <p className="text-xs font-semibold text-yellow-800 mb-1">
-                        🔐 Secret (to you only)
+                      {/* Sender Name */}
+                      <p
+                        className={`text-xs font-semibold mb-1 ${
+                          isCurrentUser
+                            ? 'text-green-600 text-right'
+                            : 'text-blue-600'
+                        }`}
+                      >
+                        {isCurrentUser ? 'You' : message.sender_name}
                       </p>
-                      <p className="text-sm text-yellow-900">{msg.secret_message}</p>
+
+                      {/* Public Message */}
+                      <div
+                        className={`px-4 py-2 rounded-lg mb-2 ${
+                          isCurrentUser
+                            ? 'bg-green-200 text-green-900 rounded-br-none'
+                            : 'bg-blue-200 text-blue-900 rounded-bl-none'
+                        }`}
+                      >
+                        <p className="text-sm font-medium">{message.public_message}</p>
+                      </div>
+
+                      {/* Secret Message (visible to both!) */}
+                      <div
+                        className={`px-4 py-2 rounded-lg mb-1 border-2 ${
+                          isCurrentUser
+                            ? 'bg-yellow-100 text-yellow-800 border-yellow-300 rounded-br-none'
+                            : 'bg-purple-100 text-purple-800 border-purple-300 rounded-bl-none'
+                        }`}
+                      >
+                        <p className="text-xs font-semibold mb-1">
+                          🔐 {isCurrentUser ? 'You sent:' : 'They sent:'}
+                        </p>
+                        <p className="text-sm italic font-medium">{message.secret_message}</p>
+                      </div>
+
+                      {/* Timestamp */}
+                      <p
+                        className={`text-xs text-gray-500 mt-1 ${
+                          isCurrentUser ? 'text-right' : 'text-left'
+                        }`}
+                      >
+                        {time}
+                        {message.status === 'sent' && isCurrentUser && ' ✓'}
+                      </p>
                     </div>
-                  )}
-
-                  {/* Status Badge */}
-                  {msg.sender_id === currentUserId && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {msg.status === 'sending' ? '⏳' : '✓'} {msg.status}
-                    </p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        ))
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </>
       )}
-
-      <div ref={messagesEndRef} />
     </div>
   );
 }

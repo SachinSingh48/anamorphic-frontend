@@ -1,25 +1,33 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../Context/AuthContext';
-import { useToast } from '../../Context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import Header from '../Shared/Header';
 import UserList from './UserList';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
+import AddFriendsModal from './AddFriendsModal';
 
 export default function ChatRoom() {
-  const { user, logout } = useAuth();
+  // 1. Grab 'token' from your AuthContext here
+  const { user, token, logout } = useAuth(); 
   const { showToast } = useToast();
+
   const [selectedUser, setSelectedUser] = useState(null);
-  const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Load users on mount
+  // 
+  const [friends, setFriends] = useState([]);
+  const [availableFriends, setAvailableFriends] = useState([]);
+  const [showAddFriends, setShowAddFriends] = useState(false);
+
+  // Load friends on mount
   useEffect(() => {
-    loadUsers();
-  }, []);
+    loadFriends();
+    loadAvailableFriends();
+  }, [token]);
 
   // Load messages when user is selected
   useEffect(() => {
@@ -28,146 +36,172 @@ export default function ChatRoom() {
     }
   }, [selectedUser]);
 
-  const loadUsers = async () => {
+  const loadFriends = async () => {
     setLoading(true);
     try {
-      // TODO: Replace with real API call
-      // const response = await usersAPI.getAll();
-      
-     const response = await fetch('http://localhost:8000/users/list', {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-    });
+      const response = await fetch('http://localhost:8000/friends/list', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error('Failed to load users');
+      if (!response.ok) {
+        throw new Error('Failed to load friends');
+      }
+
+      const data = await response.json();
+      setFriends(data.friends || []);
+    } catch (error) {
+      showToast('Failed to load friends', 'error');
+      setFriends([]);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const data = await response.json();
-    setUsers(data.users.filter((u) => u.id !== user.id));
-  } catch (error) {
-    showToast('Failed to load users', 'error');
-    // Fallback to mock data if backend doesn't have users endpoint
-    const mockUsers = [
-      {
-        id: 1,
-        username: 'alice',
-        email: 'alice@example.com',
-        avatar: 'https://i.pravatar.cc/150?img=1',
-        status: 'online',
-      },
-      {
-        id: 2,
-        username: 'bob',
-        email: 'bob@example.com',
-        avatar: 'https://i.pravatar.cc/150?img=2',
-        status: 'online',
-      },
-    ];
-    setUsers(mockUsers);
-  } finally {
-    setLoading(false);
-  }
-};
+  const loadAvailableFriends = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/friends/available', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to load available friends');
+      }
+
+      const data = await response.json();
+      setAvailableFriends(data.available_friends || []);
+    } catch (error) {
+      console.log('Failed to load available friends');
+    }
+  };
 
   const loadMessages = async () => {
     try {
-      // TODO: Replace with real API call
-      // const response = await messagesAPI.history(selectedUser.id);
-      
       const response = await fetch('http://localhost:8000/messages/history', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        with_user: selectedUser.username,
-        limit: 50,
-        before_ts: null,
-      }),
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          with_user: selectedUser.username,
+          limit: 50,
+          before_ts: null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to load messages');
+      }
+
+      const data = await response.json();
+
+      const messages = data.items.map((msg) => {
+      const senderName = msg.from === user.id ? user.username : selectedUser.username;
+      sender_name: senderName
+      
+      return {
+        id: msg.timestamp,
+        sender_id: msg.from,
+        sender_name: senderName,  // FIXED: Use correct sender
+        public_message: msg.body?.public_message || 'Message',
+        secret_message: msg.body?.secret_message || '',
+        timestamp: new Date(msg.timestamp * 1000).toISOString(),
+        status: 'sent',
+      };
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to load messages');
+      setMessages(messages);
+    } catch (error) {
+      showToast('Failed to load messages', 'error');
+      setMessages([]);
     }
-
-    const data = await response.json();
-    
-    // Transform backend messages to frontend format
-    const messages = data.items.map((msg) => ({
-      id: msg.timestamp,
-      sender_id: msg.from,
-      sender_name: selectedUser.username,
-      public_message: msg.body?.public_message || 'Message',
-      secret_message: msg.body?.secret_message || '',
-      timestamp: new Date(msg.timestamp * 1000).toISOString(),
-      status: 'sent',
-    }));
-    
-    setMessages(messages);
-  } catch (error) {
-    showToast('Failed to load messages', 'error');
-  }
-};
+  };
 
   const handleSendMessage = async (publicMsg, secretMsg) => {
     try {
-      // TODO: Replace with real API call
-      // await messagesAPI.send(selectedUser.id, publicMsg, secretMsg);
-      
-      const newMessage = {
-        id: messages.length + 1,
-        sender_id: user.id,
-        sender_name: user.username,
-        public_message: publicMsg,
-        secret_message: secretMsg,
-        is_public: false,
-        timestamp: new Date().toISOString(),
-        status: 'sending',
-      };
-      
-      setMessages((prev) => [...prev, newMessage]);
-      
-      // Simulate sending
-      setTimeout(() => {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === newMessage.id ? { ...msg, status: 'sent' } : msg
-          )
-        );
-        showToast('Message sent!', 'success');
-      }, 500);
+      const response = await fetch('http://localhost:8000/messages/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          receiver_id: selectedUser.id,
+          body: {
+            public_message: publicMsg,
+            secret_message: secretMsg,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send message');
+      }
+
+      // Reload messages to show the new message
+      await loadMessages();
+      showToast('Message sent!', 'success');
     } catch (error) {
-      showToast('Failed to send message', 'error');
+      showToast(error.message || 'Failed to send message', 'error');
+    }
+  };
+
+  const handleAddFriend = async (friendId) => {
+    try {
+      const response = await fetch(`http://localhost:8000/friends/add/${friendId}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to add friend');
+      }
+
+      const data = await response.json();
+      
+      // Reload friends list
+      await loadFriends();
+      await loadAvailableFriends();
+      
+      setShowAddFriends(false);
+      showToast(`Added ${data.friend.username}!`, 'success');
+    } catch (error) {
+      showToast(error.message || 'Failed to add friend', 'error');
     }
   };
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
-      {/* Header */}
       <Header
         user={user}
         selectedUser={selectedUser}
         onLogout={logout}
         onShowKeys={() => setShowKeys(!showKeys)}
         onMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        onAddFriends={() => setShowAddFriends(true)}
       />
 
-      {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* User List - Hidden on mobile unless menu is open */}
+        {/* Friends List */}
         <div
           className={`${
             isMobileMenuOpen ? 'block' : 'hidden'
           } md:block md:w-1/4 bg-white border-r border-gray-200`}
         >
           <UserList
-            users={users}
+            users={friends}
             selectedUser={selectedUser}
             onSelectUser={setSelectedUser}
             loading={loading}
+            onAddFriends={() => setShowAddFriends(true)}
+            title="👥 Friends"
           />
         </div>
 
@@ -180,13 +214,17 @@ export default function ChatRoom() {
                 <div className="bg-yellow-50 border-b border-yellow-200 p-4 max-h-32 overflow-y-auto">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div>
-                      <p className="font-semibold text-gray-700 mb-1">Your Keys:</p>
+                      <p className="font-semibold text-gray-700 mb-1">
+                        Your Keys:
+                      </p>
                       <p className="text-xs text-gray-600 break-all font-mono bg-white p-2 rounded">
                         {user.public_key}
                       </p>
                     </div>
                     <div>
-                      <p className="font-semibold text-gray-700 mb-1">{selectedUser.username}'s Public Key:</p>
+                      <p className="font-semibold text-gray-700 mb-1">
+                        {selectedUser.username}'s Public Key:
+                      </p>
                       <p className="text-xs text-gray-600 break-all font-mono bg-white p-2 rounded">
                         pk_user_{selectedUser.id}_mock
                       </p>
@@ -206,15 +244,34 @@ export default function ChatRoom() {
               <MessageInput
                 onSend={handleSendMessage}
                 recipientName={selectedUser.username}
+                selectedUser={selectedUser}
               />
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-500">
-              <p className="text-lg">👈 Select a user to start chatting</p>
+              <div className="text-center">
+                <p className="text-lg mb-4">👫 No friend selected</p>
+                <p className="text-sm mb-6">Add a friend to start chatting!</p>
+                <button
+                  onClick={() => setShowAddFriends(true)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold"
+                >
+                  ➕ Add Friend
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Add Friends Modal */}
+      {showAddFriends && (
+        <AddFriendsModal
+          friends={availableFriends}
+          onAddFriend={handleAddFriend}
+          onClose={() => setShowAddFriends(false)}
+        />
+      )}
     </div>
   );
 }

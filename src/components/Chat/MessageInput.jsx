@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { useToast } from '../../Context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 
-export default function MessageInput({ onSend, recipientName }) {
+export default function MessageInput({ onSend, recipientName, selectedUser }) {
+  const { token } = useAuth();
   const [publicMsg, setPublicMsg] = useState('');
   const [secretMsg, setSecretMsg] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -15,41 +17,46 @@ export default function MessageInput({ onSend, recipientName }) {
       return;
     }
 
+    if (!selectedUser) {
+      showToast('Please select a user to message', 'error');
+      return;
+    }
+
     setIsSending(true);
 
     try {
-       const response = await fetch('http://localhost:8000/messages/send', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        receiver_id: selectedUser.id,
-        body: {
-          public_message: publicMsg,
-          secret_message: secretMsg,
+      const response = await fetch('http://localhost:8000/messages/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
-      }),
-    });
+        body: JSON.stringify({
+          receiver_id: selectedUser.id,
+          body: {
+            public_message: publicMsg,
+            secret_message: secretMsg,
+          },
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error('Failed to send message');
+      if (!response.ok) {
+        throw new Error('Failed to send message');
+      }
+
+      setPublicMsg('');
+      setSecretMsg('');
+      
+      showToast('Message sent!', 'success');
+      
+      // Call parent's onSend to reload messages
+      await onSend(publicMsg, secretMsg);
+    } catch (error) {
+      showToast(error.message || 'Failed to send message', 'error');
+    } finally {
+      setIsSending(false);
     }
-
-    setPublicMsg('');
-    setSecretMsg('');
-    
-    // Reload messages to show the sent message
-    await loadMessages();
-    
-    showToast('Message sent!', 'success');
-  } catch (error) {
-    showToast(error.message || 'Failed to send message', 'error');
-  } finally {
-    setIsSending(false);
-  }
-};
+  };
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
