@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
+import { jwtDecode } from 'jwt-decode';
 
 const AuthContext = createContext();
 
@@ -44,25 +45,34 @@ export const AuthProvider = ({ children }) => {
       }
 
       const data = await response.json();
+      const accessToken = data.access_token;
       
-      const mockUser = {
-        id: Date.now(),
+      // ===== DECODE JWT TO GET REAL USER ID =====
+      const decoded = jwtDecode(accessToken);
+      const realUserId = parseInt(decoded.user_id, 10);
+      console.log('[AuthContext] Decoded JWT - user_id:', realUserId);
+      // ==========================================
+      
+      // Create user object with REAL user ID from JWT
+      const user = {
+        id: realUserId,  // Use REAL ID from JWT, not Date.now()!
         email,
         username: username,
         avatar: `https://i.pravatar.cc/150?u=${email}`,
-        public_key: 'pk_backend_' + Math.random(),
         created_at: new Date().toISOString(),
       };
       
-      setUser(mockUser);
-      setToken(data.access_token);
-      localStorage.setItem('token', data.access_token);
-      localStorage.setItem('user', JSON.stringify(mockUser));
+      setUser(user);
+      setToken(accessToken);
+      localStorage.setItem('token', accessToken);
+      localStorage.setItem('user', JSON.stringify(user));
       
-      return mockUser;
+      console.log('[AuthContext] Login successful - user:', user);
+      return user;
     } catch (err) {
       const errorMessage = err.message || 'Login failed';
       setError(errorMessage);
+      console.error('[AuthContext] Login error:', errorMessage);
       throw err;
     } finally {
       setIsLoading(false);
@@ -89,11 +99,14 @@ export const AuthProvider = ({ children }) => {
         throw new Error(errorData.detail || 'Registration failed');
       }
 
+      console.log('[AuthContext] Registration successful, logging in...');
+      
       // After successful registration, automatically login
       return await login(email, password);
     } catch (err) {
       const errorMessage = err.message || 'Registration failed';
       setError(errorMessage);
+      console.error('[AuthContext] Register error:', errorMessage);
       throw err;
     } finally {
       setIsLoading(false);
