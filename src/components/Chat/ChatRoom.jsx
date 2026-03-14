@@ -1,8 +1,3 @@
-// src/components/Chat/ChatRoom_DEBUG.jsx
-/**
- * DEBUG VERSION - Check currentUserId vs message sender_id
- */
-
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../Context/AuthContext';
 import { useToast } from '../../Context/ToastContext';
@@ -17,38 +12,29 @@ export default function ChatRoom() {
   const { showToast } = useToast();
   const [friends, setFriends] = useState([]);
   const [availableFriends, setAvailableFriends] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
+
+  // FIX: Restore selectedUser from sessionStorage so a page reload doesn't
+  // kick you back to the "no friend selected" screen.
+  const [selectedUser, setSelectedUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('selectedUser');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAddFriends, setShowAddFriends] = useState(false);
-  
+
   // WebSocket
   const wsRef = useRef(null);
-
-  // ===== DEBUG =====
-  useEffect(() => {
-    console.log('===== CURRENT USER =====');
-    console.log('user.id:', user?.id);
-    console.log('user.username:', user?.username);
-    console.log('typeof user.id:', typeof user?.id);
-  }, [user]);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      console.log('===== CURRENT MESSAGES =====');
-      messages.forEach((msg, idx) => {
-        console.log(`Message ${idx}:`);
-        console.log('  sender_id:', msg.sender_id, 'type:', typeof msg.sender_id);
-        console.log('  currentUserId:', user?.id, 'type:', typeof user?.id);
-        console.log('  MATCH?:', msg.sender_id === user?.id);
-        console.log('  String match?:', String(msg.sender_id) === String(user?.id));
-        console.log('  Full msg:', msg);
-      });
-    }
-  }, [messages, user?.id]);
-  // ==================
+  // Ref so the WS onmessage callback always sees the latest selectedUser
+  // without re-registering the handler on every selection change.
+  const selectedUserRef = useRef(selectedUser);
 
   // Load friends and establish WebSocket on mount
   useEffect(() => {
@@ -82,14 +68,6 @@ export default function ChatRoom() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
-        console.log('===== WS RECEIVED =====');
-        console.log('Raw data:', data);
-        console.log('Type:', data.type);
-        console.log('From:', data.from, 'type:', typeof data.from);
-        console.log('To:', data.to);
-        
-        // Handle incoming message
         if (data.type === 'message') {
           handleIncomingMessage(data);
         }
@@ -111,37 +89,37 @@ export default function ChatRoom() {
   };
 
   const handleIncomingMessage = (data) => {
-    // Add message to list if it's from current chat partner
-    const isFromCurrentChat =
-      (data.from === selectedUser?.id && data.to === user.id) ||
-      (data.from === user.id && data.to === selectedUser?.id);
+    const dataFrom = Number(data.from);
+    const dataTo = Number(data.to);
+    const currentUserId = Number(user.id);
+    // Read from ref — state would be stale inside the WS onmessage closure
+    const currentSelectedUser = selectedUserRef.current;
+    const selectedUserId = Number(currentSelectedUser?.id);
 
-    console.log('===== MESSAGE CHECK =====');
-    console.log('selectedUser?.id:', selectedUser?.id);
-    console.log('user.id:', user.id);
-    console.log('data.from:', data.from);
-    console.log('data.to:', data.to);
-    console.log('isFromCurrentChat:', isFromCurrentChat);
+    const isFromCurrentChat =
+      (dataFrom === selectedUserId && dataTo === currentUserId) ||
+      (dataFrom === currentUserId && dataTo === selectedUserId);
 
     if (isFromCurrentChat) {
-      // Format message for display
       const newMessage = {
         id: `msg-${data.from}-${data.timestamp}`,
-        sender_id: data.from,
-        sender_name: data.from === user.id ? user.username : selectedUser.username,
+        sender_id: dataFrom,
+        sender_name: dataFrom === currentUserId ? user.username : currentSelectedUser.username,
         public_message: data.body?.public_message || data.body || 'Message',
         secret_message: data.body?.secret_message || data.body || 'Message',
         timestamp: new Date(data.timestamp * 1000).toISOString(),
         status: 'sent',
       };
 
-      console.log('Adding message:', newMessage);
-      setMessages((prev) => {
-        console.log('Previous messages count:', prev.length);
-        console.log('New messages count:', prev.length + 1);
-        return [...prev, newMessage];
-      });
+      setMessages((prev) => [...prev, newMessage]);
     }
+  };
+
+  const handleSelectUser = (user) => {
+    setSelectedUser(user);
+    selectedUserRef.current = user;  // keep ref in sync with state
+    sessionStorage.setItem('selectedUser', JSON.stringify(user));
+    setIsMobileMenuOpen(false);
   };
 
   const loadFriends = async () => {
@@ -150,7 +128,6 @@ export default function ChatRoom() {
       const response = await fetch('http://localhost:8000/friends/list', {
         headers: { 'Authorization': `Bearer ${token}` },
       });
-
       if (!response.ok) throw new Error('Failed to load friends');
       const data = await response.json();
       setFriends(data.friends || []);
@@ -166,7 +143,6 @@ export default function ChatRoom() {
       const response = await fetch('http://localhost:8000/friends/available', {
         headers: { 'Authorization': `Bearer ${token}` },
       });
-
       if (!response.ok) throw new Error('Failed to load available friends');
       const data = await response.json();
       setAvailableFriends(data.available_friends || []);
@@ -193,16 +169,16 @@ export default function ChatRoom() {
       if (!response.ok) throw new Error('Failed to load messages');
       const data = await response.json();
 
-      console.log('===== HISTORY LOADED =====');
-      console.log('Raw history items:', data.items);
+      const currentUserId = Number(user.id);
+      const selectedUserId = Number(selectedUser.id);
 
-      // Format messages for display
       const formattedMessages = data.items.map((msg) => {
-        const senderName = msg.from === user.id ? user.username : selectedUser.username;
+        const senderIdNum = Number(msg.from);
+        const senderName = senderIdNum === currentUserId ? user.username : selectedUser.username;
 
         return {
           id: `msg-${msg.from}-${msg.timestamp}`,
-          sender_id: msg.from,
+          sender_id: senderIdNum,
           sender_name: senderName,
           public_message: msg.body?.public_message || msg.body || 'Message',
           secret_message: msg.body?.secret_message || msg.body || 'Message',
@@ -211,7 +187,6 @@ export default function ChatRoom() {
         };
       });
 
-      console.log('Formatted messages:', formattedMessages);
       setMessages(formattedMessages);
     } catch (error) {
       console.error('Failed to load message history:', error);
@@ -219,8 +194,8 @@ export default function ChatRoom() {
     }
   };
 
-  const handleSendMessage = (publicMsg, secretMsg) => {
-    // Message will be added via WebSocket onmessage callback
+  const handleSendMessage = () => {
+    // Messages appear via the WebSocket echo — no extra action needed here.
   };
 
   const handleAddFriend = async (friendId) => {
@@ -229,12 +204,9 @@ export default function ChatRoom() {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-
       if (!response.ok) throw new Error('Failed to add friend');
-
       await loadFriends();
       await loadAvailableFriends();
-      
       setShowAddFriends(false);
       showToast('Friend added!', 'success');
     } catch (error) {
@@ -259,7 +231,7 @@ export default function ChatRoom() {
           <UserList
             users={friends}
             selectedUser={selectedUser}
-            onSelectUser={setSelectedUser}
+            onSelectUser={handleSelectUser}
             loading={loading}
             onAddFriends={() => setShowAddFriends(true)}
             title="👥 Friends"
@@ -270,27 +242,21 @@ export default function ChatRoom() {
         <div className="flex-1 flex flex-col">
           {selectedUser ? (
             <>
-              {/* Debug Info */}
               {showKeys && (
                 <div className="bg-yellow-50 border-b border-yellow-200 p-4">
-                  <div className="text-sm text-gray-700 font-mono text-xs">
-                    <p className="font-bold mb-2">🐛 DEBUG INFO</p>
-                    <p>Your ID: {user?.id}</p>
-                    <p>Your Username: {user?.username}</p>
-                    <p>Chat with: {selectedUser?.username} (ID: {selectedUser?.id})</p>
-                    <p>Total messages: {messages.length}</p>
+                  <div className="text-sm text-gray-700">
+                    <p className="font-bold mb-2">💬 Chat with {selectedUser.username}</p>
+                    <p className="text-xs">✓ WebSocket connected</p>
                   </div>
                 </div>
               )}
 
-              {/* Messages Display */}
               <MessageList
                 messages={messages}
-                currentUserId={user.id}
+                currentUserId={Number(user.id)}
                 currentUsername={user.username}
               />
 
-              {/* Message Input */}
               <MessageInput
                 onSend={handleSendMessage}
                 selectedUser={selectedUser}
@@ -314,7 +280,6 @@ export default function ChatRoom() {
         </div>
       </div>
 
-      {/* Add Friends Modal */}
       {showAddFriends && (
         <AddFriendsModal
           friends={availableFriends}

@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { useToast } from '../../context/ToastContext';
+import { useToast } from '../../Context/ToastContext';
 
-export default function MessageInput({ onSend, recipientName, selectedUser }) {
-  const { token } = useAuth();
+export default function MessageInput({ onSend, recipientName, selectedUser, ws }) {
   const [publicMsg, setPublicMsg] = useState('');
   const [secretMsg, setSecretMsg] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -22,35 +20,28 @@ export default function MessageInput({ onSend, recipientName, selectedUser }) {
       return;
     }
 
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showToast('Not connected to chat server', 'error');
+      return;
+    }
+
     setIsSending(true);
 
     try {
-      const response = await fetch('http://localhost:8000/messages/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+      // Send entirely over WebSocket — the server now always persists the
+      // message to DB and echoes it back to both sender and recipient.
+      ws.send(JSON.stringify({
+        type: 'ciphertext',
+        to: selectedUser.username,
+        body: {
+          public_message: publicMsg,
+          secret_message: secretMsg,
         },
-        body: JSON.stringify({
-          receiver_id: selectedUser.id,
-          body: {
-            public_message: publicMsg,
-            secret_message: secretMsg,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to send message');
-      }
+      }));
 
       setPublicMsg('');
       setSecretMsg('');
-      
-      showToast('Message sent!', 'success');
-      
-      // Call parent's onSend to reload messages
-      await onSend(publicMsg, secretMsg);
+      onSend();
     } catch (error) {
       showToast(error.message || 'Failed to send message', 'error');
     } finally {
@@ -67,11 +58,11 @@ export default function MessageInput({ onSend, recipientName, selectedUser }) {
 
   return (
     <div className="bg-white border-t border-gray-200 p-4">
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="space-y-3">
         {/* Public Message */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            💬 Public Message (visible to {recipientName})
+            💬 Public Message (visible to {recipientName || selectedUser?.username})
           </label>
           <input
             type="text"
@@ -105,7 +96,7 @@ export default function MessageInput({ onSend, recipientName, selectedUser }) {
 
         {/* Send Button */}
         <button
-          type="submit"
+          onClick={handleSubmit}
           disabled={isSending || !publicMsg.trim() || !secretMsg.trim()}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -118,7 +109,7 @@ export default function MessageInput({ onSend, recipientName, selectedUser }) {
             '📤 Send Message'
           )}
         </button>
-      </form>
+      </div>
     </div>
   );
 }
