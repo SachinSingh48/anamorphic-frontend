@@ -92,19 +92,21 @@ export default function MessageList({ messages, currentUserId, currentUsername }
                         <p className="text-sm font-medium">{message.public_message}</p>
                       </div>
 
-                      {/* Secret Message (visible to both!) */}
-                      <div
-                        className={`px-4 py-2 rounded-lg mb-1 border-2 ${
-                          isCurrentUser
-                            ? 'bg-yellow-100 text-yellow-800 border-yellow-300 rounded-br-none'
-                            : 'bg-purple-100 text-purple-800 border-purple-300 rounded-bl-none'
-                        }`}
-                      >
-                        <p className="text-xs font-semibold mb-1">
-                          🔐 {isCurrentUser ? 'You sent:' : 'They sent:'}
-                        </p>
-                        <p className="text-sm italic font-medium">{message.secret_message}</p>
-                      </div>
+                      {/* Secret Message — only shown when present */}
+                      {message.secret_message && (
+                        <div
+                          className={`px-4 py-2 rounded-lg mb-1 border-2 ${
+                            isCurrentUser
+                              ? 'bg-yellow-100 text-yellow-800 border-yellow-300 rounded-br-none'
+                              : 'bg-purple-100 text-purple-800 border-purple-300 rounded-bl-none'
+                          }`}
+                        >
+                          <p className="text-xs font-semibold mb-1">
+                            🔐 {isCurrentUser ? 'You sent:' : 'They sent:'}
+                          </p>
+                          <p className="text-sm italic font-medium">{message.secret_message}</p>
+                        </div>
+                      )}
 
                       {/* Timestamp */}
                       <p

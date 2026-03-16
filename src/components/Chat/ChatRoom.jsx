@@ -50,6 +50,11 @@ export default function ChatRoom() {
     if (selectedUser) loadMessageHistory();
   }, [selectedUser]);
 
+  // ── Re-run history when key file uploaded after reload ────────────────────
+  useEffect(() => {
+    if (cryptoReady && selectedUser) loadMessageHistory();
+  }, [cryptoReady]);
+
   // ── Fresh onmessage whenever selectedUser or cryptoReady changes ──────────
   useEffect(() => {
     const ws = wsRef.current;
@@ -80,9 +85,9 @@ export default function ChatRoom() {
         let secret_message = '[no key loaded]';
 
         if (!body.ct0) {
-          // Old unencrypted message
+          // Plain public-only message — no encryption
           public_message = body.public_message ?? '[no content]';
-          secret_message = body.secret_message ?? '[no content]';
+          secret_message = null;
         } else if (keys) {
           try {
             [public_message, secret_message] = await Promise.all([
@@ -197,11 +202,25 @@ export default function ChatRoom() {
 
           try {
             if (isMine) {
-              public_message = body.sender_plain?.public_message ?? body.public_message ?? '[sent]';
-              secret_message = body.sender_plain?.secret_message ?? body.secret_message ?? '🔒';
+              if (body.sender_copy && keys) {
+                // Encrypted message — decrypt sender's own copy
+                [public_message, secret_message] = await Promise.all([
+                  NormalDecrypt(keys.aSK,  body.sender_copy),
+                  DoubleDecrypt(keys.dkey, body.sender_copy),
+                ]);
+              } else if (body.public_message) {
+                // Plain public-only message — no encryption was used
+                public_message = body.public_message;
+                secret_message = null;
+              } else {
+                // Old messages sent before sender_copy was implemented
+                public_message = body.sender_plain?.public_message ?? '[sent]';
+                secret_message = body.sender_plain?.secret_message ?? null;
+              }
             } else if (!body.ct0) {
+              // Plain public-only message
               public_message = body.public_message ?? '[no content]';
-              secret_message = body.secret_message ?? '[no content]';
+              secret_message = null;
             } else if (keys) {
               [public_message, secret_message] = await Promise.all([
                 NormalDecrypt(keys.aSK,  body),
@@ -239,7 +258,7 @@ export default function ChatRoom() {
       sender_id:      Number(user.id),
       sender_name:    user.username,
       public_message: publicMsg,
-      secret_message: secretMsg,
+      secret_message: secretMsg || null,  // null for public-only messages
       timestamp:      new Date().toISOString(),
       status:         'sent',
     }]);
