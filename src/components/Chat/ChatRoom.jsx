@@ -32,7 +32,7 @@ export default function ChatRoom() {
 
   const wsRef = useRef(null);
 
-  // ── WebSocket + friends on mount ─────────────────────────────────────────
+  //  WebSocket + friends on mount 
   useEffect(() => {
     loadFriends();
     loadAvailableFriends();
@@ -40,22 +40,22 @@ export default function ChatRoom() {
     return () => { wsRef.current?.close(); };
   }, [token]);
 
-  // ── Fetch friend dkey when selected user changes ─────────────────────────
+  // Fetch friend dkey when selected user changes 
   useEffect(() => {
     if (selectedUser && token) fetchFriendDkey(selectedUser.username);
   }, [selectedUser, token]);
 
-  // ── Load history when selected user changes ───────────────────────────────
+  //  Load history when selected user changes 
   useEffect(() => {
     if (selectedUser) loadMessageHistory();
   }, [selectedUser]);
 
-  // ── Re-run history when key file uploaded after reload ────────────────────
+  // Re-run history when key file uploaded after reload 
   useEffect(() => {
     if (cryptoReady && selectedUser) loadMessageHistory();
   }, [cryptoReady]);
 
-  // ── Fresh onmessage whenever selectedUser or cryptoReady changes ──────────
+  // ── Fresh onmessage whenever selectedUser or cryptoReady changes 
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
@@ -85,7 +85,7 @@ export default function ChatRoom() {
         let secret_message = '[no key loaded]';
 
         if (!body.ct0) {
-          // Plain public-only message — no encryption
+          // Plain public-only message no encryption
           public_message = body.public_message ?? '[no content]';
           secret_message = null;
         } else if (keys) {
@@ -116,8 +116,7 @@ export default function ChatRoom() {
     };
   }, [selectedUser, user, cryptoReady]);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
+  
   const fetchFriendDkey = async (username) => {
     setFriendDkey(null);
     setFetchingKey(true);
@@ -279,7 +278,7 @@ export default function ChatRoom() {
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render 
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">

@@ -1,17 +1,4 @@
-/**
- * cryptoUtils.js
- *
- * Math primitives and serialization helpers needed for ElGamal.
- * All random operations use window.crypto — cryptographically secure.
- * BigInt is used throughout for large-number arithmetic.
- */
 
-// ─── Math ──────────────────────────────────────────────────────────────────
-
-/**
- * Modular exponentiation: base^exp mod mod
- * Equivalent to Python's built-in pow(base, exp, mod)
- */
 export function powMod(base, exp, mod) {
   base = BigInt(base);
   exp  = BigInt(exp);
@@ -27,11 +14,6 @@ export function powMod(base, exp, mod) {
   return result;
 }
 
-/**
- * Modular multiplicative inverse: a^-1 mod m
- * Equivalent to PyCryptodome's number.inverse(a, m)
- * Uses the extended Euclidean algorithm.
- */
 export function modInverse(a, m) {
   a = ((BigInt(a) % BigInt(m)) + BigInt(m)) % BigInt(m);
   m = BigInt(m);
@@ -47,8 +29,8 @@ export function modInverse(a, m) {
 }
 
 /**
- * Cryptographically random BigInt in [min, max] inclusive.
- * Uses rejection sampling to avoid bias.
+ Cryptographically random BigInt in [min, max] inclusive.
+ Uses rejection sampling to avoid bias.
  */
 export function randomBigIntInRange(min, max) {
   min = BigInt(min);
@@ -69,15 +51,15 @@ export function randomBigIntInRange(min, max) {
 }
 
 /**
- * Miller-Rabin primality test.
- * 20 rounds gives a false-positive probability of at most 4^-20 ≈ 10^-12.
+ Miller-Rabin primality test.
+ 20 rounds gives a false-positive probability of at most 4^-20 ≈ 10^-12.
  */
 function millerRabin(n, rounds = 20) {
   if (n < 2n) return false;
   if (n === 2n || n === 3n) return true;
   if (n % 2n === 0n) return false;
 
-  // write n-1 as 2^r * d
+  // n-1 as 2^r * d
   let d = n - 1n;
   let r = 0n;
   while (d % 2n === 0n) { d /= 2n; r++; }
@@ -95,12 +77,7 @@ function millerRabin(n, rounds = 20) {
   return true;
 }
 
-/**
- * Generate a random prime of exactly `bits` bits.
- * Equivalent to PyCryptodome's number.getPrime(bits).
- * ⚠ 2048-bit key generation takes ~2–5 seconds in the browser.
- *   Use 512 bits during development, 2048 in production.
- */
+
 export async function generatePrime(bits) {
   const byteLen = Math.ceil(bits / 8);
   while (true) {
@@ -114,11 +91,11 @@ export async function generatePrime(bits) {
   }
 }
 
-// ─── Hashing ───────────────────────────────────────────────────────────────
+// ─── Hashing 
 
 /**
- * SHA-256 hash. Returns Uint8Array (32 bytes).
- * Equivalent to Python's hashlib.sha256(data).digest()
+  SHA-256 hash. Returns Uint8Array (32 bytes).
+ Equivalent to Python's hashlib.sha256(data).digest()
  */
 export async function sha256(data) {
   let bytes;
@@ -129,11 +106,10 @@ export async function sha256(data) {
   return new Uint8Array(buf);
 }
 
-// ─── Random bytes ──────────────────────────────────────────────────────────
+// ─── Random bytes 
 
 /**
- * Cryptographically random byte array of given length.
- * Equivalent to PyCryptodome's get_random_bytes(length).
+ Equivalent to PyCryptodome's get_random_bytes(length).
  */
 export function randomBytes(length) {
   const arr = new Uint8Array(length);
@@ -141,12 +117,11 @@ export function randomBytes(length) {
   return arr;
 }
 
-// ─── Serialization ─────────────────────────────────────────────────────────
-//
+// ─── Serialization 
+
 // JSON cannot represent BigInt or Uint8Array natively.
 // jsonSafe()    → converts them to tagged plain objects safe for JSON.stringify
-// jsonRestore() → converts them back after JSON.parse
-//
+// jsonRestore() → converts them back after JSON.pars
 // BigInt   → { __bigint__: "hexstring" }
 // Uint8Array → { __bytes__: "base64string" }
 

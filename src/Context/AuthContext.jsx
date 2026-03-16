@@ -14,29 +14,23 @@ export const AuthProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError]         = useState(null);
 
-  // 'idle' | 'needs_key_file' | 'ready'
+  
   const [cryptoStatus, setCryptoStatus] = useState('idle');
 
-  // Restore session on page reload (token only — keys must be re-uploaded)
+  // Restore session on page reload keys nned to be re-uploaded)
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
     const savedUser  = localStorage.getItem('user');
     if (savedToken && savedUser) {
       setToken(savedToken);
       setUser(JSON.parse(savedUser));
-      // Keys are NOT in localStorage — user must upload file again
       setCryptoStatus('needs_key_file');
     }
     setIsLoading(false);
   }, []);
 
-  // ── Key initialisation ───────────────────────────────────────────────────
+  // ── Key initialisation
 
-  /**
-   * Check if the server already has a key for this user.
-   * If yes  → they have a key file → show upload modal
-   * If no   → first time → generate keys + download file + upload to server
-   */
   async function _initKeys(accessToken, username) {
     try {
       // Check if key already exists on server
@@ -52,7 +46,7 @@ export const AuthProvider = ({ children }) => {
       } else {
         // First time — generate, download, upload
         console.log('[AuthContext] No key on server — generating new keys...');
-        await generateAndDownloadKeys(username, 512); // use 2048 in production
+        await generateAndDownloadKeys(username, 512); // used lower for fast process
 
         const pubkey = getPublicKeyForUpload();
         if (pubkey) {
@@ -75,10 +69,7 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
-  /**
-   * Called by KeyFileModal after the user successfully uploads their file.
-   * Also re-uploads dkey to server in case it was wiped.
-   */
+ 
   const onKeyFileLoaded = async () => {
     try {
       const pubkey = getPublicKeyForUpload();
@@ -98,7 +89,7 @@ export const AuthProvider = ({ children }) => {
     setCryptoStatus('ready');
   };
 
-  // ── Login ────────────────────────────────────────────────────────────────
+  // ── Login
 
   const login = async (email, password) => {
     setError(null);
@@ -151,7 +142,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // ── Register ─────────────────────────────────────────────────────────────
+  // ── Register 
 
   const register = async (name, email, password) => {
     setError(null);
@@ -175,8 +166,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // ── Logout ───────────────────────────────────────────────────────────────
-
+  // ── Logout 
   const logout = () => {
     setUser(null);
     setToken(null);

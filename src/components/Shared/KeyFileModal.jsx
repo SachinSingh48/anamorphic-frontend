@@ -1,10 +1,5 @@
 import { useState, useRef } from 'react';
 
-/**
- * Shown when the server already has a public key for this user,
- * meaning they have a key file from a previous session.
- * The user must upload their username_keys.json to continue.
- */
 export default function KeyFileModal({ username, onKeysLoaded, onCancel }) {
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
@@ -22,7 +17,6 @@ export default function KeyFileModal({ username, onKeysLoaded, onCancel }) {
     setError('');
 
     try {
-      // Import here to avoid circular deps — modal is only rendered when needed
       const { loadKeysFromFile } = await import('../../crypto/anamorphicCrypto');
       const keys = await loadKeysFromFile(file);
       onKeysLoaded(keys);

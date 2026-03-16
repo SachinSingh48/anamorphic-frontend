@@ -1,13 +1,3 @@
-/**
- * anamorphicCrypto.js
- *
- * Keys are NEVER stored in localStorage or any browser storage.
- * They exist in two places only:
- *   1. A JSON file downloaded to the user's device (username_keys.json)
- *   2. In-memory (_sessionKeys) for the duration of the browser session
- *
- * On tab close / refresh, _sessionKeys is cleared automatically.
- */
 
 import {
   powMod,
@@ -21,19 +11,14 @@ import {
 } from './cryptoUtils.js';
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// In-memory session storage — never persisted anywhere
-// ═══════════════════════════════════════════════════════════════════════════
 
-let _sessionKeys = null; // { aSK, dkey } — gone when tab closes
+let _sessionKeys = null; // { aSK, dkey } gone when tab closes
 
 export function getSessionKeys() { return _sessionKeys; }
 export function clearSessionKeys() { _sessionKeys = null; }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
 // ElGamal PKE  (base_pke.py)
-// ═══════════════════════════════════════════════════════════════════════════
 
 class ElGamalPKE {
 
@@ -140,9 +125,8 @@ class ElGamalPKE {
 }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
+
 // NIZK Mock  (nizk_mock.py)
-// ═══════════════════════════════════════════════════════════════════════════
 
 class NIZKMock {
   async SimulatorS0(lambdaBits) {
@@ -160,9 +144,7 @@ class NIZKMock {
 }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Anamorphic Encryption  (receiver_am.py)
-// ═══════════════════════════════════════════════════════════════════════════
 
 const pke  = new ElGamalPKE();
 const nizk = new NIZKMock();
@@ -199,14 +181,9 @@ export async function DoubleDecrypt(dkey, anamorphicCiphertext) {
 }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Key file — download & upload  (no localStorage at all)
-// ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Generate new keys → store in memory → auto-download username_keys.json.
- * Called on first login (server has no key for this user yet).
- */
+// Key file — download & upload  (no localStorage)
+
 export async function generateAndDownloadKeys(username, lambdaBits = 2048) {
   const { aSK, dkey } = await AnamorphicKeyGen(lambdaBits);
   _sessionKeys = { aSK, dkey };
@@ -232,10 +209,9 @@ export async function generateAndDownloadKeys(username, lambdaBits = 2048) {
   return { aSK, dkey };
 }
 
-/**
- * Load keys from a File object picked by the user.
- * Stores them in _sessionKeys (memory only).
- */
+/** Load keys from a File object picked by the user.
+  Stores them in sessionKeys (memory only).*/
+
 export async function loadKeysFromFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -260,9 +236,7 @@ export async function loadKeysFromFile(file) {
   });
 }
 
-/**
- * Returns full dkey for uploading to /keys/upsert.
- */
+/**Returns full dkey for uploading to /keys/upsert.*/
 export function getPublicKeyForUpload() {
   if (!_sessionKeys) return null;
   const { dkey } = _sessionKeys;

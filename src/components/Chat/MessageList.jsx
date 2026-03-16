@@ -31,7 +31,6 @@ export default function MessageList({ messages, currentUserId, currentUsername }
         <>
           {Object.entries(groupedMessages).map(([date, dateMessages]) => (
             <div key={date}>
-              {/* Date Separator */}
               <div className="flex items-center gap-2 my-4">
                 <div className="flex-1 h-px bg-gray-300"></div>
                 <span className="text-xs text-gray-500 px-2">{date}</span>
