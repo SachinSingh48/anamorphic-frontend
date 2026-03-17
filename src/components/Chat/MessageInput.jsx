@@ -10,6 +10,7 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
   const { showToast } = useToast();
 
   const hasSecret = secretMsg.trim().length > 0;
+  const isReady   = !fetchingKey && !!friendDkey;
 
   const handleSubmit = async (e) => {
     e?.preventDefault();
@@ -26,30 +27,29 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
       showToast('Not connected to chat server', 'error');
       return;
     }
-    if (hasSecret && !friendDkey) {
+    if (!isReady) {
       showToast('Friend encryption key not available', 'error');
+      return;
+    }
+
+    const myKeys = getSessionKeys();
+    if (!myKeys) {
+      showToast('Your encryption keys are not loaded', 'error');
       return;
     }
 
     setIsSending(true);
 
     try {
-      let body;
+      // Always encrypt the public message with friend's pk0 → ct0
+      // If secret provided, also encrypt with friend's pk1 → ct1
+      // Passing null for m1 produces { ct0 } only — no plaintext in DB ever.
+      const secretOrNull = hasSecret ? secretMsg : null;
 
-      if (hasSecret) {
-        // Anamorphic mode — encrypt both messages
-        const myKeys = getSessionKeys();
-        if (!myKeys) {
-          showToast('Your encryption keys are not loaded', 'error');
-          return;
-        }
-        const forRecipient = await AnamorphicEncrypt(friendDkey, publicMsg, secretMsg);
-        const senderCopy   = await AnamorphicEncrypt(myKeys.dkey, publicMsg, secretMsg);
-        body = jsonSafe({ ...forRecipient, sender_copy: senderCopy });
-      } else {
-        // Public only — no encryption
-        body = { public_message: publicMsg };
-      }
+      const forRecipient = await AnamorphicEncrypt(friendDkey, publicMsg, secretOrNull);
+      const senderCopy   = await AnamorphicEncrypt(myKeys.dkey,  publicMsg, secretOrNull);
+
+      const body = jsonSafe({ ...forRecipient, sender_copy: senderCopy });
 
       ws.send(JSON.stringify({
         type: 'ciphertext',
@@ -57,7 +57,8 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
         body,
       }));
 
-      onSend(publicMsg, hasSecret ? secretMsg : null);
+      // Optimistic update — show plaintext immediately in UI for current session
+      onSend(publicMsg, secretOrNull);
 
       setPublicMsg('');
       setSecretMsg('');
@@ -76,13 +77,21 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
     }
   };
 
-  const isReady = !fetchingKey && !!friendDkey;
-
   return (
     <div className="bg-white border-t border-gray-200 p-4">
+
+      {/* Key not ready warning */}
+      {!isReady && (
+        <div className="mb-3 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
+          {fetchingKey
+            ? '⏳ Loading friend encryption key...'
+            : "⚠️ Friend hasn't set up encryption keys yet — they need to log in first"}
+        </div>
+      )}
+
       <div className="space-y-3">
 
-        {/* Public Message — always required */}
+        {/* Public Message */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             💬 Public Message (visible to {selectedUser?.username})
@@ -94,7 +103,7 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
             onKeyPress={handleKeyPress}
             placeholder="Type a public message..."
             className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500 disabled:bg-gray-50"
-            disabled={isSending}
+            disabled={isSending || !isReady}
           />
         </div>
 
@@ -102,7 +111,7 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             🔐 Secret Message{' '}
-            <span className="text-gray-400 font-normal">(optional — anamorphic ElGamal)</span>
+            <span className="text-gray-400 font-normal">(optional — anamorphic channel)</span>
           </label>
           <input
             type="text"
@@ -114,37 +123,28 @@ export default function MessageInput({ onSend, selectedUser, ws, friendDkey, fet
               ${hasSecret
                 ? 'border-purple-400 focus:border-purple-600'
                 : 'border-gray-200 focus:border-gray-400'}`}
-            disabled={isSending}
+            disabled={isSending || !isReady}
           />
           <p className="text-xs text-gray-400 mt-1">
             {hasSecret
-              ? '🔒 Will be encrypted — only recipient can decrypt'
-              : 'No secret message — only public message will be sent'}
+              ? '🔒 Both messages encrypted with ElGamal'
+              : '🔒 Public message will still be encrypted with ElGamal'}
           </p>
         </div>
-
-        {/* Warning only shown if secret typed but key not ready */}
-        {hasSecret && !isReady && (
-          <div className="px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
-            {fetchingKey
-              ? '⏳ Loading friend encryption key...'
-              : "⚠️ Friend hasn't set up encryption keys yet"}
-          </div>
-        )}
 
         {/* Send Button */}
         <button
           onClick={handleSubmit}
-          disabled={isSending || !publicMsg.trim() || (hasSecret && !isReady)}
+          disabled={isSending || !publicMsg.trim() || !isReady}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSending ? (
             <span className="flex items-center justify-center gap-2">
               <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              {hasSecret ? 'Encrypting & Sending...' : 'Sending...'}
+              Encrypting & Sending...
             </span>
           ) : (
-            hasSecret ? '🔐 Encrypt & Send' : '📤 Send'
+            hasSecret ? '🔐 Encrypt & Send' : '🔒 Encrypt & Send'
           )}
         </button>
       </div>

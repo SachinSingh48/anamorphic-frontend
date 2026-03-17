@@ -1,4 +1,3 @@
-
 import {
   powMod,
   modInverse,
@@ -10,9 +9,7 @@ import {
   jsonRestore,
 } from './cryptoUtils.js';
 
-
-
-let _sessionKeys = null; // { aSK, dkey } gone when tab closes
+let _sessionKeys = null; // { aSK, dkey } — gone when tab closes
 
 export function getSessionKeys() { return _sessionKeys; }
 export function clearSessionKeys() { _sessionKeys = null; }
@@ -125,7 +122,6 @@ class ElGamalPKE {
 }
 
 
-
 // NIZK Mock  (nizk_mock.py)
 
 class NIZKMock {
@@ -158,9 +154,24 @@ export async function AnamorphicKeyGen(lambdaBits = 2048) {
   return { aSK: sk0, dkey: { pk0, pk1, sk1, aux } };
 }
 
-export async function AnamorphicEncrypt(friendPublicKey, m0, m1) {
+/**
+ * AnamorphicEncrypt
+ * m1 is optional. If omitted, only ct0 is produced (public-only message).
+ * This keeps the public message encrypted even when no secret is needed.
+ *
+ *   With secret:  { ct0, ct1, pi }
+ *   Public only:  { ct0 }
+ */
+export async function AnamorphicEncrypt(friendPublicKey, m0, m1 = null) {
   const { pk0, pk1, aux } = friendPublicKey;
+
   const ct0 = await pke.Encrypt(pk0, m0);
+
+  // Public-only — just encrypt m0, skip ct1 and NIZK proof
+  if (m1 === null) {
+    return { ct0 };
+  }
+
   const ct1 = await pke.Encrypt(pk1, m1);
   const nizkInstance = {
     pk0: { p: pk0.p.toString(), g: pk0.g.toString(), h: pk0.h.toString() },
@@ -172,18 +183,31 @@ export async function AnamorphicEncrypt(friendPublicKey, m0, m1) {
   return { ct0, ct1, pi };
 }
 
+/**
+ * NormalDecrypt — decrypt public message (ct0) using receiver's aSK.
+ */
 export async function NormalDecrypt(aSK, anamorphicCiphertext) {
   return pke.decryptAndDecode(aSK, anamorphicCiphertext.ct0);
 }
 
+/**
+ * DoubleDecrypt — decrypt secret message (ct1) using receiver's dkey.sk1.
+ * Returns null if ct1 is not present (public-only message).
+ */
 export async function DoubleDecrypt(dkey, anamorphicCiphertext) {
+  if (!anamorphicCiphertext.ct1) return null;
   return pke.decryptAndDecode(dkey.sk1, anamorphicCiphertext.ct1);
 }
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Key file — download & upload
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Key file — download & upload  (no localStorage)
-
+/**
+ * Generate new keys → store in memory → auto-download username_keys.json.
+ * Called on first login (server has no key for this user yet).
+ */
 export async function generateAndDownloadKeys(username, lambdaBits = 2048) {
   const { aSK, dkey } = await AnamorphicKeyGen(lambdaBits);
   _sessionKeys = { aSK, dkey };
@@ -209,9 +233,10 @@ export async function generateAndDownloadKeys(username, lambdaBits = 2048) {
   return { aSK, dkey };
 }
 
-/** Load keys from a File object picked by the user.
-  Stores them in sessionKeys (memory only).*/
-
+/**
+ * Load keys from a File object picked by the user.
+ * Stores them in _sessionKeys (memory only).
+ */
 export async function loadKeysFromFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -236,7 +261,7 @@ export async function loadKeysFromFile(file) {
   });
 }
 
-/**Returns full dkey for uploading to /keys/upsert.*/
+// Returns full dkey for uploading to /keys/upsert.
 export function getPublicKeyForUpload() {
   if (!_sessionKeys) return null;
   const { dkey } = _sessionKeys;

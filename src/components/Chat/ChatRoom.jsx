@@ -32,7 +32,7 @@ export default function ChatRoom() {
 
   const wsRef = useRef(null);
 
-  //  WebSocket + friends on mount 
+  // ── WebSocket + friends on mount ─────────────────────────────────────────
   useEffect(() => {
     loadFriends();
     loadAvailableFriends();
@@ -40,22 +40,22 @@ export default function ChatRoom() {
     return () => { wsRef.current?.close(); };
   }, [token]);
 
-  // Fetch friend dkey when selected user changes 
+  // ── Fetch friend dkey when selected user changes ─────────────────────────
   useEffect(() => {
     if (selectedUser && token) fetchFriendDkey(selectedUser.username);
   }, [selectedUser, token]);
 
-  //  Load history when selected user changes 
+  // ── Load history when selected user changes ───────────────────────────────
   useEffect(() => {
     if (selectedUser) loadMessageHistory();
   }, [selectedUser]);
 
-  // Re-run history when key file uploaded after reload 
+  // ── Re-run history when key file uploaded after reload ────────────────────
   useEffect(() => {
     if (cryptoReady && selectedUser) loadMessageHistory();
   }, [cryptoReady]);
 
-  // ── Fresh onmessage whenever selectedUser or cryptoReady changes 
+  // ── Fresh onmessage whenever selectedUser or cryptoReady changes ──────────
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
@@ -85,19 +85,17 @@ export default function ChatRoom() {
         let secret_message = '[no key loaded]';
 
         if (!body.ct0) {
-          // Plain public-only message no encryption
+          // Old unencrypted message (pre-encryption era)
           public_message = body.public_message ?? '[no content]';
           secret_message = null;
         } else if (keys) {
           try {
-            [public_message, secret_message] = await Promise.all([
-              NormalDecrypt(keys.aSK,  body),
-              DoubleDecrypt(keys.dkey, body),
-            ]);
+            public_message = await NormalDecrypt(keys.aSK,  body);
+            secret_message = await DoubleDecrypt(keys.dkey, body); // null if no ct1
           } catch (e) {
             console.error('[ChatRoom] Decryption failed:', e);
             public_message = '[decryption failed]';
-            secret_message = '[decryption failed]';
+            secret_message = null;
           }
         }
 
@@ -116,7 +114,8 @@ export default function ChatRoom() {
     };
   }, [selectedUser, user, cryptoReady]);
 
-  
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
   const fetchFriendDkey = async (username) => {
     setFriendDkey(null);
     setFetchingKey(true);
@@ -202,29 +201,21 @@ export default function ChatRoom() {
           try {
             if (isMine) {
               if (body.sender_copy && keys) {
-                // Encrypted message — decrypt sender's own copy
-                [public_message, secret_message] = await Promise.all([
-                  NormalDecrypt(keys.aSK,  body.sender_copy),
-                  DoubleDecrypt(keys.dkey, body.sender_copy),
-                ]);
-              } else if (body.public_message) {
-                // Plain public-only message — no encryption was used
-                public_message = body.public_message;
-                secret_message = null;
+                // Decrypt sender's own copy — always encrypted, never plaintext
+                public_message = await NormalDecrypt(keys.aSK,  body.sender_copy);
+                secret_message = await DoubleDecrypt(keys.dkey, body.sender_copy); // null if no ct1
               } else {
-                // Old messages sent before sender_copy was implemented
+                // Old messages before sender_copy was implemented
                 public_message = body.sender_plain?.public_message ?? '[sent]';
                 secret_message = body.sender_plain?.secret_message ?? null;
               }
             } else if (!body.ct0) {
-              // Plain public-only message
+              // Old unencrypted message (pre-encryption era)
               public_message = body.public_message ?? '[no content]';
               secret_message = null;
             } else if (keys) {
-              [public_message, secret_message] = await Promise.all([
-                NormalDecrypt(keys.aSK,  body),
-                DoubleDecrypt(keys.dkey, body),
-              ]);
+              public_message = await NormalDecrypt(keys.aSK,  body);
+              secret_message = await DoubleDecrypt(keys.dkey, body); // null if no ct1
             }
           } catch (e) {
             console.error('[ChatRoom] History decrypt error:', e);
@@ -257,7 +248,7 @@ export default function ChatRoom() {
       sender_id:      Number(user.id),
       sender_name:    user.username,
       public_message: publicMsg,
-      secret_message: secretMsg || null,  // null for public-only messages
+      secret_message: secretMsg || null,
       timestamp:      new Date().toISOString(),
       status:         'sent',
     }]);
@@ -278,7 +269,7 @@ export default function ChatRoom() {
     }
   };
 
-  // ── Render 
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
