@@ -14,7 +14,6 @@ export default function ChatRoom() {
   const { showToast } = useToast();
 
   const [friends, setFriends]                   = useState([]);
-  const [availableFriends, setAvailableFriends]  = useState([]);
   const [messages, setMessages]                  = useState([]);
   const [loading, setLoading]                    = useState(false);
   const [showKeys, setShowKeys]                  = useState(false);
@@ -35,7 +34,6 @@ export default function ChatRoom() {
   // ── WebSocket + friends on mount ─────────────────────────────────────────
   useEffect(() => {
     loadFriends();
-    loadAvailableFriends();
     connectWebSocket();
     return () => { wsRef.current?.close(); };
   }, [token]);
@@ -49,11 +47,6 @@ export default function ChatRoom() {
   useEffect(() => {
     if (selectedUser) loadMessageHistory();
   }, [selectedUser]);
-
-  // ── Re-run history when key file uploaded after reload ────────────────────
-  useEffect(() => {
-    if (cryptoReady && selectedUser) loadMessageHistory();
-  }, [cryptoReady]);
 
   // ── Fresh onmessage whenever selectedUser or cryptoReady changes ──────────
   useEffect(() => {
@@ -85,17 +78,19 @@ export default function ChatRoom() {
         let secret_message = '[no key loaded]';
 
         if (!body.ct0) {
-          // Old unencrypted message (pre-encryption era)
+          // Old unencrypted message
           public_message = body.public_message ?? '[no content]';
-          secret_message = null;
+          secret_message = body.secret_message ?? '[no content]';
         } else if (keys) {
           try {
-            public_message = await NormalDecrypt(keys.aSK,  body);
-            secret_message = await DoubleDecrypt(keys.dkey, body); // null if no ct1
+            [public_message, secret_message] = await Promise.all([
+              NormalDecrypt(keys.aSK,  body),
+              DoubleDecrypt(keys.dkey, body),
+            ]);
           } catch (e) {
             console.error('[ChatRoom] Decryption failed:', e);
             public_message = '[decryption failed]';
-            secret_message = null;
+            secret_message = '[decryption failed]';
           }
         }
 
@@ -165,16 +160,6 @@ export default function ChatRoom() {
     finally   { setLoading(false); }
   };
 
-  const loadAvailableFriends = async () => {
-    try {
-      const res  = await fetch('http://localhost:8000/friends/available', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setAvailableFriends(data.available_friends || []);
-    } catch { /* silent */ }
-  };
 
   const loadMessageHistory = async () => {
     try {
@@ -200,22 +185,16 @@ export default function ChatRoom() {
 
           try {
             if (isMine) {
-              if (body.sender_copy && keys) {
-                // Decrypt sender's own copy — always encrypted, never plaintext
-                public_message = await NormalDecrypt(keys.aSK,  body.sender_copy);
-                secret_message = await DoubleDecrypt(keys.dkey, body.sender_copy); // null if no ct1
-              } else {
-                // Old messages before sender_copy was implemented
-                public_message = body.sender_plain?.public_message ?? '[sent]';
-                secret_message = body.sender_plain?.secret_message ?? null;
-              }
+              public_message = body.sender_plain?.public_message ?? body.public_message ?? '[sent]';
+              secret_message = body.sender_plain?.secret_message ?? body.secret_message ?? '🔒';
             } else if (!body.ct0) {
-              // Old unencrypted message (pre-encryption era)
               public_message = body.public_message ?? '[no content]';
-              secret_message = null;
+              secret_message = body.secret_message ?? '[no content]';
             } else if (keys) {
-              public_message = await NormalDecrypt(keys.aSK,  body);
-              secret_message = await DoubleDecrypt(keys.dkey, body); // null if no ct1
+              [public_message, secret_message] = await Promise.all([
+                NormalDecrypt(keys.aSK,  body),
+                DoubleDecrypt(keys.dkey, body),
+              ]);
             }
           } catch (e) {
             console.error('[ChatRoom] History decrypt error:', e);
@@ -248,7 +227,7 @@ export default function ChatRoom() {
       sender_id:      Number(user.id),
       sender_name:    user.username,
       public_message: publicMsg,
-      secret_message: secretMsg || null,
+      secret_message: secretMsg,
       timestamp:      new Date().toISOString(),
       status:         'sent',
     }]);
@@ -261,7 +240,6 @@ export default function ChatRoom() {
       });
       if (!res.ok) throw new Error('Failed to add friend');
       await loadFriends();
-      await loadAvailableFriends();
       setShowAddFriends(false);
       showToast('Friend added!', 'success');
     } catch (err) {
@@ -346,7 +324,6 @@ export default function ChatRoom() {
 
       {showAddFriends && (
         <AddFriendsModal
-          friends={availableFriends}
           onAddFriend={handleAddFriend}
           onClose={() => setShowAddFriends(false)}
         />
