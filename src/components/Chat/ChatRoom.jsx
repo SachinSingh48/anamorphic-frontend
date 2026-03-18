@@ -32,7 +32,7 @@ export default function ChatRoom() {
 
   const wsRef = useRef(null);
 
-  // ── WebSocket + friends on mount ─────────────────────────────────────────
+  // ── WebSocket + friends on mount 
   useEffect(() => {
     loadFriends();
     loadAvailableFriends();
@@ -40,22 +40,17 @@ export default function ChatRoom() {
     return () => { wsRef.current?.close(); };
   }, [token]);
 
-  // ── Fetch friend dkey when selected user changes ─────────────────────────
+  // ── Fetch friend dkey when selected user changes 
   useEffect(() => {
     if (selectedUser && token) fetchFriendDkey(selectedUser.username);
   }, [selectedUser, token]);
 
-  // ── Load history when selected user changes ───────────────────────────────
+  // ── Load history when selected user changes 
   useEffect(() => {
     if (selectedUser) loadMessageHistory();
   }, [selectedUser]);
 
-  // ── Re-run history when key file uploaded after reload ────────────────────
-  useEffect(() => {
-    if (cryptoReady && selectedUser) loadMessageHistory();
-  }, [cryptoReady]);
-
-  // ── Fresh onmessage whenever selectedUser or cryptoReady changes ──────────
+  // ── Fresh onmessage whenever selectedUser or cryptoReady changes 
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
@@ -85,17 +80,19 @@ export default function ChatRoom() {
         let secret_message = '[no key loaded]';
 
         if (!body.ct0) {
-          // Old unencrypted message (pre-encryption era)
+          // Old unencrypted message
           public_message = body.public_message ?? '[no content]';
-          secret_message = null;
+          secret_message = body.secret_message ?? '[no content]';
         } else if (keys) {
           try {
-            public_message = await NormalDecrypt(keys.aSK,  body);
-            secret_message = await DoubleDecrypt(keys.dkey, body); // null if no ct1
+            [public_message, secret_message] = await Promise.all([
+              NormalDecrypt(keys.aSK,  body),
+              DoubleDecrypt(keys.dkey, body),
+            ]);
           } catch (e) {
             console.error('[ChatRoom] Decryption failed:', e);
             public_message = '[decryption failed]';
-            secret_message = null;
+            secret_message = '[decryption failed]';
           }
         }
 
@@ -114,12 +111,24 @@ export default function ChatRoom() {
     };
   }, [selectedUser, user, cryptoReady]);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Helpers 
 
   const fetchFriendDkey = async (username) => {
     setFriendDkey(null);
     setFetchingKey(true);
     try {
+      // Check sessionStorage cache first — avoids a server round-trip
+      // on every chat open. Cache is cleared automatically on tab close.
+      const cacheKey = `friendKey_${username}`;
+      const cached   = sessionStorage.getItem(cacheKey);
+
+      if (cached) {
+        setFriendDkey(jsonRestore(JSON.parse(cached)));
+        console.log(`[ChatRoom] Loaded encryption key for ${username} from cache ✓`);
+        return;
+      }
+
+      // Not cached — fetch from server and save to sessionStorage
       const res = await fetch(`http://localhost:8000/keys/get/${username}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -127,9 +136,11 @@ export default function ChatRoom() {
         showToast(`${username} hasn't set up encryption keys yet`, 'error');
         return;
       }
-      const data = await res.json();
-      setFriendDkey(jsonRestore(data.pubkey));
-      console.log(`[ChatRoom] Loaded encryption key for ${username} ✓`);
+      const data   = await res.json();
+      const dkey   = jsonRestore(data.pubkey);
+      setFriendDkey(dkey);
+      sessionStorage.setItem(cacheKey, JSON.stringify(data.pubkey)); // store raw JWK (already JSON-safe)
+      console.log(`[ChatRoom] Loaded encryption key for ${username} from server ✓`);
     } catch {
       showToast('Failed to fetch friend encryption key', 'error');
     } finally {
@@ -200,22 +211,16 @@ export default function ChatRoom() {
 
           try {
             if (isMine) {
-              if (body.sender_copy && keys) {
-                // Decrypt sender's own copy — always encrypted, never plaintext
-                public_message = await NormalDecrypt(keys.aSK,  body.sender_copy);
-                secret_message = await DoubleDecrypt(keys.dkey, body.sender_copy); // null if no ct1
-              } else {
-                // Old messages before sender_copy was implemented
-                public_message = body.sender_plain?.public_message ?? '[sent]';
-                secret_message = body.sender_plain?.secret_message ?? null;
-              }
+              public_message = body.sender_plain?.public_message ?? body.public_message ?? '[sent]';
+              secret_message = body.sender_plain?.secret_message ?? body.secret_message ?? '🔒';
             } else if (!body.ct0) {
-              // Old unencrypted message (pre-encryption era)
               public_message = body.public_message ?? '[no content]';
-              secret_message = null;
+              secret_message = body.secret_message ?? '[no content]';
             } else if (keys) {
-              public_message = await NormalDecrypt(keys.aSK,  body);
-              secret_message = await DoubleDecrypt(keys.dkey, body); // null if no ct1
+              [public_message, secret_message] = await Promise.all([
+                NormalDecrypt(keys.aSK,  body),
+                DoubleDecrypt(keys.dkey, body),
+              ]);
             }
           } catch (e) {
             console.error('[ChatRoom] History decrypt error:', e);
@@ -248,7 +253,7 @@ export default function ChatRoom() {
       sender_id:      Number(user.id),
       sender_name:    user.username,
       public_message: publicMsg,
-      secret_message: secretMsg || null,
+      secret_message: secretMsg,
       timestamp:      new Date().toISOString(),
       status:         'sent',
     }]);
@@ -269,7 +274,15 @@ export default function ChatRoom() {
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // Clear all cached friend keys from sessionStorage (call on logout or
+  // when you want to force a fresh fetch from the server).
+  const clearFriendKeyCache = () => {
+    Object.keys(sessionStorage)
+      .filter((k) => k.startsWith('friendKey_'))
+      .forEach((k) => sessionStorage.removeItem(k));
+  };
+
+  // ── Render 
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
