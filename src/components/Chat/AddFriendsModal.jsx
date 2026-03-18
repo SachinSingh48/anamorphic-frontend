@@ -33,6 +33,7 @@ export default function AddFriendsModal({ onAddFriend, onClose }) {
       if (!res.ok) throw new Error();
       const data = await res.json();
 
+      // Filter client-side by query — server returns all non-friends
       const all = data.available_friends || [];
       setResults(
         query.trim()
@@ -42,7 +43,7 @@ export default function AddFriendsModal({ onAddFriend, onClose }) {
           : all
       );
     } catch {
-      // Silent — toasts are not spammed while typing
+      // Silent — don't spam toasts while typing
     } finally {
       setIsSearching(false);
     }

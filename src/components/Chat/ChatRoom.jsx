@@ -31,24 +31,24 @@ export default function ChatRoom() {
 
   const wsRef = useRef(null);
 
-  // ── WebSocket + friends on mount 
+  // WebSocket + friends on mount
   useEffect(() => {
     loadFriends();
     connectWebSocket();
     return () => { wsRef.current?.close(); };
   }, [token]);
 
-  // ── Fetch friend dkey when selected user changes 
+  // Fetch friend dkey when selected user changes
   useEffect(() => {
     if (selectedUser && token) fetchFriendDkey(selectedUser.username);
   }, [selectedUser, token]);
 
-  // ── Load history when selected user changes 
+  // Load history when selected user changes
   useEffect(() => {
     if (selectedUser) loadMessageHistory();
   }, [selectedUser]);
 
-  // ── Fresh onmessage whenever selectedUser or cryptoReady changes 
+  // Fresh onmessage whenever selectedUser or cryptoReady changes
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
@@ -109,24 +109,12 @@ export default function ChatRoom() {
     };
   }, [selectedUser, user, cryptoReady]);
 
-  // ── Helpers 
+  // Helpers
 
   const fetchFriendDkey = async (username) => {
     setFriendDkey(null);
     setFetchingKey(true);
     try {
-      // Check sessionStorage cache first — avoids a server round-trip
-      // on every chat open. Cache is cleared automatically on tab close.
-      const cacheKey = `friendKey_${username}`;
-      const cached   = sessionStorage.getItem(cacheKey);
-
-      if (cached) {
-        setFriendDkey(jsonRestore(JSON.parse(cached)));
-        console.log(`[ChatRoom] Loaded encryption key for ${username} from cache ✓`);
-        return;
-      }
-
-      // Not cached — fetch from server and save to sessionStorage
       const res = await fetch(`http://localhost:8000/keys/get/${username}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -134,11 +122,9 @@ export default function ChatRoom() {
         showToast(`${username} hasn't set up encryption keys yet`, 'error');
         return;
       }
-      const data   = await res.json();
-      const dkey   = jsonRestore(data.pubkey);
-      setFriendDkey(dkey);
-      sessionStorage.setItem(cacheKey, JSON.stringify(data.pubkey)); // store raw JWK (already JSON-safe)
-      console.log(`[ChatRoom] Loaded encryption key for ${username} from server ✓`);
+      const data = await res.json();
+      setFriendDkey(jsonRestore(data.pubkey));
+      console.log(`[ChatRoom] Loaded encryption key for ${username} ✓`);
     } catch {
       showToast('Failed to fetch friend encryption key', 'error');
     } finally {
@@ -261,15 +247,7 @@ export default function ChatRoom() {
     }
   };
 
-  // Clear all cached friend keys from sessionStorage (call on logout or
-  // when you want to force a fresh fetch from the server).
-  const clearFriendKeyCache = () => {
-    Object.keys(sessionStorage)
-      .filter((k) => k.startsWith('friendKey_'))
-      .forEach((k) => sessionStorage.removeItem(k));
-  };
-
-  // ── Render 
+  // Render
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
