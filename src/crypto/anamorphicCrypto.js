@@ -154,25 +154,19 @@ export async function AnamorphicKeyGen(lambdaBits = 2048) {
   return { aSK: sk0, dkey: { pk0, pk1, sk1, aux } };
 }
 
-/**
- * AnamorphicEncrypt
- * m1 is optional. If omitted, only ct0 is produced (public-only message).
- * This keeps the public message encrypted even when no secret is needed.
- *
- *   With secret:  { ct0, ct1, pi }
- *   Public only:  { ct0 }
- */
 export async function AnamorphicEncrypt(friendPublicKey, m0, m1 = null) {
   const { pk0, pk1, aux } = friendPublicKey;
+  const random_y0 = randomBigIntInRange(2n, pk0.p - 2n);
+  const ct0 = await pke.Encrypt(pk0, m0, random_y0);
 
-  const ct0 = await pke.Encrypt(pk0, m0);
-
-  // Public-only — just encrypt m0, skip ct1 and NIZK proof
+  // Public-only mode — only ct0, no secret channel, no NIZK needed
   if (m1 === null) {
     return { ct0 };
   }
 
-  const ct1 = await pke.Encrypt(pk1, m1);
+  const random_y1 = randomBigIntInRange(2n, pk1.p - 2n);
+  const ct1 = await pke.Encrypt(pk1, m1, random_y1);
+
   const nizkInstance = {
     pk0: { p: pk0.p.toString(), g: pk0.g.toString(), h: pk0.h.toString() },
     ct0: { c1: ct0.c1.toString(), c2: ct0.c2.toString() },
@@ -183,16 +177,12 @@ export async function AnamorphicEncrypt(friendPublicKey, m0, m1 = null) {
   return { ct0, ct1, pi };
 }
 
-/**
- * NormalDecrypt — decrypt public message (ct0) using receiver's aSK.
- */
 export async function NormalDecrypt(aSK, anamorphicCiphertext) {
   return pke.decryptAndDecode(aSK, anamorphicCiphertext.ct0);
 }
 
 /**
- * DoubleDecrypt — decrypt secret message (ct1) using receiver's dkey.sk1.
- * Returns null if ct1 is not present (public-only message).
+ * DoubleDecrypt — returns null if ct1 is absent (public-only message).
  */
 export async function DoubleDecrypt(dkey, anamorphicCiphertext) {
   if (!anamorphicCiphertext.ct1) return null;
