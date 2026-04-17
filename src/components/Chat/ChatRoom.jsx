@@ -6,51 +6,66 @@ import UserList from './UserList';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import AddFriendsModal from './AddFriendsModal';
+
+// ElGamal
 import { getSessionKeys, NormalDecrypt, DoubleDecrypt } from '../../crypto/anamorphicCrypto';
 import { jsonRestore } from '../../crypto/cryptoUtils';
+
+// Dual Regev
+import {
+  getDRSession,
+  drDecryptPublic,
+  drDecryptSecret,
+  drDeserializePublicKey,
+} from '../../dualregev';
 
 export default function ChatRoom() {
   const { user, logout, token, cryptoReady } = useAuth();
   const { showToast } = useToast();
 
-  const [friends, setFriends]                   = useState([]);
-  const [availableFriends, setAvailableFriends]  = useState([]);
-  const [messages, setMessages]                  = useState([]);
-  const [loading, setLoading]                    = useState(false);
-  const [showKeys, setShowKeys]                  = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen]  = useState(false);
-  const [showAddFriends, setShowAddFriends]       = useState(false);
-  const [friendDkey, setFriendDkey]              = useState(null);
-  const [fetchingKey, setFetchingKey]            = useState(false);
+  const [friends, setFriends]                 = useState([]);
+  const [messages, setMessages]               = useState([]);
+  const [loading, setLoading]                 = useState(false);
+  const [showKeys, setShowKeys]               = useState(false);
+  const [isMobileMenuOpen, setMobileMenu]     = useState(false);
+  const [showAddFriends, setShowAddFriends]   = useState(false);
+
+  // Combined pubkey from server: { elgamal: rawDkey, dualregev: rawApk }
+  const [friendPubkey, setFriendPubkey]       = useState(null);
+  const [fetchingKey, setFetchingKey]         = useState(false);
+
+  // Active scheme for this conversation — auto-selects best available
+  const [activeScheme, setActiveScheme]       = useState('elgamal');
 
   const [selectedUser, setSelectedUser] = useState(() => {
     try {
-      const saved = sessionStorage.getItem('selectedUser');
-      return saved ? JSON.parse(saved) : null;
+      const s = sessionStorage.getItem('selectedUser');
+      return s ? JSON.parse(s) : null;
     } catch { return null; }
   });
 
   const wsRef = useRef(null);
 
-  // ── WebSocket + friends on mount 
+  // ── Mount ────────────────────────────────────────────────────────────────
   useEffect(() => {
     loadFriends();
-    loadAvailableFriends();
     connectWebSocket();
-    return () => { wsRef.current?.close(); };
+    return () => wsRef.current?.close();
   }, [token]);
 
-  // ── Fetch friend dkey when selected user changes 
+  // ── Selected user changed ─────────────────────────────────────────────────
   useEffect(() => {
-    if (selectedUser && token) fetchFriendDkey(selectedUser.username);
-  }, [selectedUser, token]);
-
-  // ── Load history when selected user changes 
-  useEffect(() => {
-    if (selectedUser) loadMessageHistory();
+    if (!selectedUser || !token) return;
+    fetchFriendPubkey(selectedUser.username);
+    loadMessageHistory();
   }, [selectedUser]);
 
-  // ── Fresh onmessage whenever selectedUser or cryptoReady changes 
+  // ── Re-decrypt history after key file upload on reload ────────────────────
+  useEffect(() => {
+    if (cryptoReady && selectedUser) loadMessageHistory();
+  }, [cryptoReady]);
+
+  // ── Fresh onmessage — reassigned when selectedUser/cryptoReady changes ────
   useEffect(() => {
     const ws = wsRef.current;
     if (!ws) return;
@@ -70,83 +85,178 @@ export default function ChatRoom() {
           (dataFrom === currentUserId  && dataTo === selectedUserId);
 
         if (!isFromCurrentChat) return;
-        // Skip echo of own messages — already added optimistically
-        if (dataFrom === currentUserId) return;
+        if (dataFrom === currentUserId) return; // own echo — added optimistically
 
-        const body = jsonRestore(data.body);
-        const keys = getSessionKeys();
+        // jsonRestore handles ElGamal BigInt tags; DR bodies are plain numbers (no-op)
+        const body   = jsonRestore(data.body);
+        const scheme = body.scheme ?? 'elgamal';
 
-        let public_message = '[no key loaded]';
-        let secret_message = '[no key loaded]';
+        const { public_message, secret_message } = await _decrypt(scheme, body);
 
-        if (!body.ct0) {
-          // Old unencrypted message
-          public_message = body.public_message ?? '[no content]';
-          secret_message = body.secret_message ?? '[no content]';
-        } else if (keys) {
-          try {
-            [public_message, secret_message] = await Promise.all([
-              NormalDecrypt(keys.aSK,  body),
-              DoubleDecrypt(keys.dkey, body),
-            ]);
-          } catch (e) {
-            console.error('[ChatRoom] Decryption failed:', e);
-            public_message = '[decryption failed]';
-            secret_message = '[decryption failed]';
-          }
-        }
-
-        setMessages((prev) => [...prev, {
+        setMessages(prev => [...prev, {
           id:             `msg-${data.from}-${data.timestamp}`,
           sender_id:      dataFrom,
           sender_name:    selectedUser?.username || 'Unknown',
           public_message,
           secret_message,
+          scheme,
           timestamp:      new Date(data.timestamp * 1000).toISOString(),
           status:         'received',
         }]);
       } catch (err) {
-        console.error('[ChatRoom] WS message error:', err);
+        console.error('[ChatRoom] WS error:', err);
       }
     };
   }, [selectedUser, user, cryptoReady]);
 
-  // ── Helpers 
+  // ── Friend pubkey (session-cached) ───────────────────────────────────────
 
-  const fetchFriendDkey = async (username) => {
-    setFriendDkey(null);
+  const fetchFriendPubkey = async (username) => {
+    setFriendPubkey(null);
     setFetchingKey(true);
     try {
-      // Check sessionStorage cache first — avoids a server round-trip
-      // on every chat open. Cache is cleared automatically on tab close.
-      const cacheKey = `friendKey_${username}`;
+      const cacheKey = `friendPubkey_${username}`;
       const cached   = sessionStorage.getItem(cacheKey);
+      let   raw;
 
       if (cached) {
-        setFriendDkey(jsonRestore(JSON.parse(cached)));
-        console.log(`[ChatRoom] Loaded encryption key for ${username} from cache ✓`);
-        return;
+        raw = JSON.parse(cached);
+      } else {
+        const res = await fetch(`http://localhost:8000/keys/get/${username}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          showToast(`${username} hasn't set up encryption keys yet`, 'error');
+          return;
+        }
+        raw = (await res.json()).pubkey;
+        sessionStorage.setItem(cacheKey, JSON.stringify(raw));
       }
 
-      // Not cached — fetch from server and save to sessionStorage
-      const res = await fetch(`http://localhost:8000/keys/get/${username}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        showToast(`${username} hasn't set up encryption keys yet`, 'error');
-        return;
+      setFriendPubkey(raw);
+
+      // Auto-select best scheme: prefer DR (post-quantum) when available
+      if (raw.dualregev) {
+        setActiveScheme('dualregev');
+      } else {
+        setActiveScheme('elgamal');
       }
-      const data   = await res.json();
-      const dkey   = jsonRestore(data.pubkey);
-      setFriendDkey(dkey);
-      sessionStorage.setItem(cacheKey, JSON.stringify(data.pubkey)); // store raw JWK (already JSON-safe)
-      console.log(`[ChatRoom] Loaded encryption key for ${username} from server ✓`);
+
+      console.log(`[ChatRoom] Key loaded for ${username} — scheme: ${raw.dualregev ? 'dualregev' : 'elgamal'}`);
     } catch {
       showToast('Failed to fetch friend encryption key', 'error');
     } finally {
       setFetchingKey(false);
     }
   };
+
+  // ── Decrypt helper (routes by scheme) ────────────────────────────────────
+
+  const _decrypt = async (scheme, body) => {
+    if (scheme === 'dualregev') {
+      const drKeys = getDRSession();
+      if (!drKeys) return { public_message: '[no DR key loaded]', secret_message: null };
+      try {
+        const [pub, sec] = await Promise.all([
+          drDecryptPublic(drKeys.apk, drKeys.ask, body),
+          drDecryptSecret(drKeys.apk, drKeys.tk,  body),
+        ]);
+        return { public_message: pub, secret_message: sec };
+      } catch (e) {
+        console.error('[ChatRoom] DR decrypt error:', e);
+        return { public_message: '[decryption failed]', secret_message: null };
+      }
+    }
+
+    // ElGamal (default)
+    const egKeys = getSessionKeys();
+    if (!egKeys) return { public_message: '[no EG key loaded]', secret_message: null };
+
+    // Legacy unencrypted messages
+    if (!body.ct0) {
+      return {
+        public_message: body.public_message ?? '[no content]',
+        secret_message: null,
+      };
+    }
+    try {
+      const [pub, sec] = await Promise.all([
+        NormalDecrypt(egKeys.aSK,  body),
+        DoubleDecrypt(egKeys.dkey, body),
+      ]);
+      return { public_message: pub, secret_message: sec };
+    } catch (e) {
+      console.error('[ChatRoom] EG decrypt error:', e);
+      return { public_message: '[decryption failed]', secret_message: null };
+    }
+  };
+
+  // ── Message history ───────────────────────────────────────────────────────
+
+  const loadMessageHistory = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/messages/history', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ with_user: selectedUser.username, limit: 50, before_ts: null }),
+      });
+      if (!res.ok) throw new Error();
+      const { items } = await res.json();
+      const currentUserId = Number(user.id);
+
+      const decrypted = await Promise.all(items.map(async (msg) => {
+        const senderIdNum = Number(msg.from);
+        const isMine      = senderIdNum === currentUserId;
+        const body        = jsonRestore(msg.body);
+        const scheme      = body.scheme ?? 'elgamal';
+
+        let result;
+        try {
+          if (isMine) {
+            result = await _decryptSenderCopy(body, scheme);
+          } else {
+            result = await _decrypt(scheme, body);
+          }
+        } catch (e) {
+          console.error('[ChatRoom] History decrypt error:', e);
+          result = { public_message: '[decryption failed]', secret_message: null };
+        }
+
+        return {
+          id:             `msg-${msg.from}-${msg.timestamp}`,
+          sender_id:      senderIdNum,
+          sender_name:    isMine ? user.username : selectedUser.username,
+          public_message: result.public_message,
+          secret_message: result.secret_message,
+          scheme,
+          timestamp:      new Date(msg.timestamp * 1000).toISOString(),
+          status:         'sent',
+        };
+      }));
+
+      setMessages(decrypted);
+    } catch (err) {
+      console.error('[ChatRoom] History load error:', err);
+      setMessages([]);
+    }
+  };
+
+  // Decrypt sender_copy — messages sent by the current user
+  const _decryptSenderCopy = async (body, scheme) => {
+    // Legacy: old messages with sender_plain plaintext
+    if (!body.sender_copy) {
+      return {
+        public_message: body.sender_plain?.public_message ?? '[sent]',
+        secret_message: body.sender_plain?.secret_message ?? null,
+      };
+    }
+
+    const copy       = body.sender_copy;
+    const copyScheme = copy.scheme ?? (copy.ct0 ? 'elgamal' : 'dualregev');
+    return _decrypt(copyScheme, copy);
+  };
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
   const connectWebSocket = () => {
     const ws = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
@@ -159,104 +269,34 @@ export default function ChatRoom() {
   const handleSelectUser = (u) => {
     setSelectedUser(u);
     setMessages([]);
+    setFriendPubkey(null);
     sessionStorage.setItem('selectedUser', JSON.stringify(u));
-    setIsMobileMenuOpen(false);
+    setMobileMenu(false);
+  };
+
+  const handleSendMessage = (publicMsg, secretMsg, scheme) => {
+    setMessages(prev => [...prev, {
+      id:             `msg-${user.id}-${Date.now()}`,
+      sender_id:      Number(user.id),
+      sender_name:    user.username,
+      public_message: publicMsg,
+      secret_message: secretMsg ?? null,
+      scheme:         scheme ?? 'elgamal',
+      timestamp:      new Date().toISOString(),
+      status:         'sent',
+    }]);
   };
 
   const loadFriends = async () => {
     setLoading(true);
     try {
-      const res  = await fetch('http://localhost:8000/friends/list', {
+      const res = await fetch('http://localhost:8000/friends/list', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error();
-      const data = await res.json();
-      setFriends(data.friends || []);
+      setFriends((await res.json()).friends || []);
     } catch { showToast('Failed to load friends', 'error'); }
     finally   { setLoading(false); }
-  };
-
-  const loadAvailableFriends = async () => {
-    try {
-      const res  = await fetch('http://localhost:8000/friends/available', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setAvailableFriends(data.available_friends || []);
-    } catch { /* silent */ }
-  };
-
-  const loadMessageHistory = async () => {
-    try {
-      const res = await fetch('http://localhost:8000/messages/history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ with_user: selectedUser.username, limit: 50, before_ts: null }),
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-
-      const currentUserId = Number(user.id);
-      const keys          = getSessionKeys();
-
-      const decrypted = await Promise.all(
-        data.items.map(async (msg) => {
-          const senderIdNum = Number(msg.from);
-          const isMine      = senderIdNum === currentUserId;
-          const body        = jsonRestore(msg.body);
-
-          let public_message = '[no key loaded]';
-          let secret_message = '[no key loaded]';
-
-          try {
-            if (isMine) {
-              public_message = body.sender_plain?.public_message ?? body.public_message ?? '[sent]';
-              secret_message = body.sender_plain?.secret_message ?? body.secret_message ?? '🔒';
-            } else if (!body.ct0) {
-              public_message = body.public_message ?? '[no content]';
-              secret_message = body.secret_message ?? '[no content]';
-            } else if (keys) {
-              [public_message, secret_message] = await Promise.all([
-                NormalDecrypt(keys.aSK,  body),
-                DoubleDecrypt(keys.dkey, body),
-              ]);
-            }
-          } catch (e) {
-            console.error('[ChatRoom] History decrypt error:', e);
-            public_message = '[decryption failed]';
-            secret_message = '[decryption failed]';
-          }
-
-          return {
-            id:             `msg-${msg.from}-${msg.timestamp}`,
-            sender_id:      senderIdNum,
-            sender_name:    isMine ? user.username : selectedUser.username,
-            public_message,
-            secret_message,
-            timestamp:      new Date(msg.timestamp * 1000).toISOString(),
-            status:         'sent',
-          };
-        })
-      );
-
-      setMessages(decrypted);
-    } catch (err) {
-      console.error('[ChatRoom] Failed to load history:', err);
-      setMessages([]);
-    }
-  };
-
-  const handleSendMessage = (publicMsg, secretMsg) => {
-    setMessages((prev) => [...prev, {
-      id:             `msg-${user.id}-${Date.now()}`,
-      sender_id:      Number(user.id),
-      sender_name:    user.username,
-      public_message: publicMsg,
-      secret_message: secretMsg,
-      timestamp:      new Date().toISOString(),
-      status:         'sent',
-    }]);
   };
 
   const handleAddFriend = async (friendId) => {
@@ -266,7 +306,10 @@ export default function ChatRoom() {
       });
       if (!res.ok) throw new Error('Failed to add friend');
       await loadFriends();
-      await loadAvailableFriends();
+      // Invalidate friend key cache
+      Object.keys(sessionStorage)
+        .filter(k => k.startsWith('friendPubkey_'))
+        .forEach(k => sessionStorage.removeItem(k));
       setShowAddFriends(false);
       showToast('Friend added!', 'success');
     } catch (err) {
@@ -274,15 +317,12 @@ export default function ChatRoom() {
     }
   };
 
-  // Clear all cached friend keys from sessionStorage (call on logout or
-  // when you want to force a fresh fetch from the server).
-  const clearFriendKeyCache = () => {
-    Object.keys(sessionStorage)
-      .filter((k) => k.startsWith('friendKey_'))
-      .forEach((k) => sessionStorage.removeItem(k));
-  };
+  // ── Render ────────────────────────────────────────────────────────────────
 
-  // ── Render 
+  const schemes = {
+    elgamal:   !!friendPubkey?.elgamal,
+    dualregev: !!friendPubkey?.dualregev,
+  };
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
@@ -291,7 +331,7 @@ export default function ChatRoom() {
         selectedUser={selectedUser}
         onLogout={logout}
         onShowKeys={() => setShowKeys(!showKeys)}
-        onMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        onMenuToggle={() => setMobileMenu(!isMobileMenuOpen)}
         onAddFriends={() => setShowAddFriends(true)}
       />
 
@@ -311,18 +351,22 @@ export default function ChatRoom() {
           {selectedUser ? (
             <>
               {showKeys && (
-                <div className="bg-yellow-50 border-b border-yellow-200 p-4 text-sm text-gray-700 space-y-1">
-                  <p className="font-bold">💬 Chat with {selectedUser.username}</p>
-                  <p className="text-xs">✓ WebSocket connected</p>
-                  <p className="text-xs">
-                    {!cryptoReady
-                      ? '⚠️ Key file not loaded'
-                      : fetchingKey
-                        ? '⏳ Loading friend encryption key...'
-                        : friendDkey
-                          ? '🔐 Anamorphic encryption ready'
-                          : '⚠️ Friend has no encryption key'}
-                  </p>
+                <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3 text-xs text-gray-700 space-y-1">
+                  <p className="font-bold text-sm">💬 Chat with {selectedUser.username}</p>
+                  <p>✓ WebSocket connected</p>
+                  {!cryptoReady ? (
+                    <p>⚠️ Key file not loaded</p>
+                  ) : fetchingKey ? (
+                    <p>⏳ Fetching encryption key...</p>
+                  ) : friendPubkey ? (
+                    <>
+                      {schemes.dualregev && <p>🔒 Dual Regev (post-quantum) available</p>}
+                      {schemes.elgamal   && <p>🔐 ElGamal (classical) available</p>}
+                      <p>Active: <strong>{activeScheme}</strong></p>
+                    </>
+                  ) : (
+                    <p>⚠️ Friend has no encryption keys yet</p>
+                  )}
                 </div>
               )}
 
@@ -336,8 +380,11 @@ export default function ChatRoom() {
                 onSend={handleSendMessage}
                 selectedUser={selectedUser}
                 ws={wsRef.current}
-                friendDkey={friendDkey}
+                friendPubkey={friendPubkey}
                 fetchingKey={fetchingKey}
+                activeScheme={activeScheme}
+                onSchemeChange={setActiveScheme}
+                availableSchemes={schemes}
               />
             </>
           ) : (
@@ -359,7 +406,6 @@ export default function ChatRoom() {
 
       {showAddFriends && (
         <AddFriendsModal
-          friends={availableFriends}
           onAddFriend={handleAddFriend}
           onClose={() => setShowAddFriends(false)}
         />

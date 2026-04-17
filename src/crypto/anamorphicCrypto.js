@@ -13,7 +13,7 @@ let _sessionKeys = null; // { aSK, dkey } — gone when tab closes
 
 export function getSessionKeys() { return _sessionKeys; }
 export function clearSessionKeys() { _sessionKeys = null; }
-
+export function setSessionKeys(keys) { _sessionKeys = keys; }
 
 // ElGamal PKE  (base_pke.py)
 

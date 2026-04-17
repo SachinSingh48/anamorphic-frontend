@@ -1,6 +1,13 @@
 import { useState, useRef } from 'react';
+import { useAuth } from '../../Context/AuthContext';
 
-export default function KeyFileModal({ username, onKeysLoaded, onCancel }) {
+/**
+ * Shown on page reload when keys are not in session.
+ * User uploads their combined username_keys.json file.
+ * Handles both ElGamal and Dual Regev restoration via AuthContext.onKeyFileLoaded.
+ */
+export default function KeyFileModal({ username, onCancel }) {
+  const { onKeyFileLoaded } = useAuth();
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -12,14 +19,11 @@ export default function KeyFileModal({ username, onKeysLoaded, onCancel }) {
       setError('Please select a .json file');
       return;
     }
-
     setLoading(true);
     setError('');
-
     try {
-      const { loadKeysFromFile } = await import('../../crypto/anamorphicCrypto');
-      const keys = await loadKeysFromFile(file);
-      onKeysLoaded(keys);
+      await onKeyFileLoaded(file);
+      // AuthContext sets cryptoStatus = 'ready' — App re-renders automatically
     } catch (err) {
       setError(err.message || 'Failed to load key file');
     } finally {
@@ -45,7 +49,9 @@ export default function KeyFileModal({ username, onKeysLoaded, onCancel }) {
           <h2 className="text-2xl font-bold text-gray-800">Upload Your Key File</h2>
           <p className="text-sm text-gray-500 mt-2">
             Welcome back, <span className="font-semibold">{username}</span>!
-            Upload your <code className="bg-gray-100 px-1 rounded">{username}_keys.json</code> file to continue.
+            Upload your{' '}
+            <code className="bg-gray-100 px-1 rounded">{username}_keys.json</code>{' '}
+            file to restore your ElGamal and Dual Regev keys.
           </p>
         </div>
 
@@ -89,8 +95,9 @@ export default function KeyFileModal({ username, onKeysLoaded, onCancel }) {
         )}
 
         {/* Info */}
-        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
-          🔒 Your private key never leaves your device. The file is read locally in your browser.
+        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700 space-y-1">
+          <p>🔒 Your private keys never leave your device — read locally in your browser.</p>
+          <p>📦 This file contains both ElGamal and Dual Regev keys.</p>
         </div>
 
         {/* Cancel */}
